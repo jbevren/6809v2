@@ -9,7 +9,7 @@ This documentation is primarily a placeholder and will likely be improved as tim
 
 System memory map:
 
-0000-dfff	System RAM
+0000-DFFF	System RAM
 E000-FEFF	System ROM  (ROMON=high) or System RAM(ROMON=low)
 FF00-FF0F	68681 DUART (see below for I/O definitions)
 FF10-FFDF	reserved: Don't use
@@ -47,3 +47,5 @@ sdcard/		SD-Card code (not yet finished)
 
 License: CC:SA license v4.0
 I encourage the sharing of this information as long as some credit is given in the firmware and/or board design.
+
+Please direct inquiries to jbevren@gmail.com.
