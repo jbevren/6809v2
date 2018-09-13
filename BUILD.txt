@@ -1,0 +1,72 @@
+ ** 6809v2 SBC Assembly instructions **
+
+Parts needed:
+
+#	Part
+--	--IC's--
+1	63c093 cpu	dip40
+1	68681  duart	dip40
+1	128k-512k sram	dip32*
+1	2764 eprom	dip28
+1	74ls10		dip14
+1	74ls00		dip14
+1	74ls32		dip14
+1	74ls133		dip16
+1	74lxc244	sop20
+2	max232		dip16
+1	14.750mhz oscillator
+1	3.3v LDO	TO220 or SOT-83
+
+--	--discretes--
+13	.1uf decoupling caps
+9	1uf  electrolytic caps
+1	10uf electrolytic cap
+1	51kohm [513] 1206 resistor
+1	51 ohm [510] 1206 resistor
+1	10k (brown black red) resistor
+1	100k (brown black yellow) resistor
+1	1n4148 diode
+1	6mm push switch
+1	LED
+
+--	--ports--
+2	solder-cup DB9 male jack
+1	wurth 693072010801 (or similar) micro-sd slot
+1	micro-b usb jack (optional if barrel jack is fitted, power inlet only)
+1	2.5mm barrel jack(optional if usb is fitted)
+1	2-pin header
+
+--	--IC sockets (optional)--
+1	dip28 .600
+1	dip32 .600
+2	dip40 .600
+4	dip14 .300
+3	dip16 .300
+1	crystal socket**
+
+* A 512k sram may be fitted, but the board lacks hardware to effectively map more than 256k.  A jumper under the ram socket connects A18 to ground.
+** Oscillator cans don't tend to stick well in DIP sockets.  It's recommended to either have a specific socket type or solder the oscillator to the board.
+
+Assembly:
+If your board is from VCFMW 13, it's likely that all SMT components are already mounted.  Bare-board purchases may not be this way.
+
+Mount the surface mount components first.  The surrounding components will interfere with soldering later.
+* The 74lxc244 may be mounted before the USB jack to aid in drag soldering.
+
+Mount the chip sockets if provided
+
+Mount the oscillator (X1)
+
+Mount the discrete components:
+ Value	location(s)
+ 10uf	C22 (unmarked, near barrel jack )
+ 1uf	c6 (reset circuit)
+ 1uf	c18,c19,c20,c21 (near u11)
+ 1uf	c1,c2,c3,c4 (near u6)
+ .1uf	C5 (reset circuit) and near all IC's
+ 100k	R1 (reset circuit)
+  10k	R3 (between CPU and DUART)
+ Switch	SW1 (reset circuit)
+ diode	D1  (reset circuit)
+ 3.3v	U8 (near power jack) or U13 (bottom of pcb): Fit one only!
+

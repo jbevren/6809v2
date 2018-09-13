@@ -1,0 +1,19 @@
+0001                         
+0002                         
+0003                         ; assert sdcs (op7) to turn the LED on to indicate life.
+0004                         
+0005                         	OPT L
+0006                         
+0007 ffe0                    	ORG $ffe0
+0008 ffe0 86 00              	lda #$00	; all bits=gpio
+0009 ffe2 b7 ff 0d           	sta $ff0d	; OPCR
+0010 ffe5 86 80              	lda #$80	; bit 7 = sdcs
+0011 ffe7 b7 ff 0e           	sta $ff0f	; ROPR
+0012 ffea 7e ff ea           hcf	jmp hcf		; and stop
+0013                         
+0014                         ;aaand done.
+0015                         
+0016                         ;hand asm:
+0017                                ;0  1  2  3  4  5  6  7    8  9  a  b  c  d  e  f  
+0018                         ;ffe0: 86 00 97 ff 0d 86 80 97   ff 0e 0e ff 0a 00 00 00
+0019                         ;ff00: ff e0 ff e0 ff e0 ff e0   ff e0 ff e0 ff e0 ff e0

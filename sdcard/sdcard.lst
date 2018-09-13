@@ -1,0 +1,654 @@
+0001                               ;**********************************************************
+0002                               ;*
+0003                               ;*	DOLO-1 HOMEBREW COMPUTER
+0004                               ;*	Hardware and software design by Dolo Miah
+0005                               ;*	Copyright 2014-18
+0006                               ;*  Free to use for any non-commercial purpose subject to
+0007                               ;*  full credit of original my authorship please!
+0008                               ;*
+0009                               ;*  SDCARD.S
+0010                               ;*  Low level SD card driver routines.  This module implements
+0011                               ;*  software bit banging through VIA 2 port B of an SD card
+0012                               ;*  interface.  So the card is clocked in software which is
+0013                               ;*  not great for performance but fast enough for my
+0014                               ;*  purposes.  I think we can get around 8.5KB/s raw sector
+0015                               ;*  read/write speed, translating to around 5.5KB/s of useful
+0016                               ;*  throughput using the filesystem.
+0017                               ;*
+0018                               ;**********************************************************
+0019                               
+0020                               ;**********************************************************
+0021                               ;* 
+0022                               ;*  Ported to the 6809 CPU by David 'jbevren' Wood
+0023                               ;* 
+0024                               ;*  Original algorhythms used with permission from Dolo Miah
+0025                               ;*   as long as the code remains open-sourced.
+0026                               ;* 
+0027                               ;*  Adapted for the 6809v2 SBC created in 2018 by jbevren
+0028                               ;* 
+0029                               ;* 
+0030                               ;* 
+0031                               ;* 
+0032                               ;* 
+0033                               ;* 
+0034                               ;* 
+0035                               ;* 
+0036                               ;* 
+0037                               ;**********************************************************
+0038                               
+0039                               ;*  TODO: Remove 6502 assembler-specific directives
+0040                               ;*  TODO: Define labels (see list below, list may be incomplete)
+0041                               ;*  TODO: Make the source usable on 80-column displays
+0042                               ;*  TODO: 
+0043                               ;*  TODO: 
+0044                               ;*  TODO: 
+0045                               ;*  TODO: 
+0046                               ;*  TODO: 
+0047                               ;*  TODO: 
+0048                               
+0049                               ;* REMINDER:  The output port bits are inverted:
+0050                               ;*              Use SOPR to set an output to 0,
+0051                               ;*              Use ROPR to set an output to 1.
+0052                               
+0053                               ;****************************************
+0054                               ;* 
+0055                               ;* Hardware defines for 6809v2 SBC
+0056                               ;* 
+0057                               ;****************************************
+0058                               
+0059 ff00                          IOPAGE	equ  $ff00
+0060 ff0d                          IPR	equ  IOPAGE+$d
+0061 ff0e                          SOPR	equ  IOPAGE+$e
+0062 ff0f                          ROPR	equ  IOPAGE+$f
+0063                               
+0064                               ;****************************************
+0065                               ;* 
+0066                               ;* Hardware defines for 6809v2 SBC
+0067                               ;* 
+0068                               ;****************************************
+0069                               
+0070 0020                          SD_CK	equ 32 ; bit 5 (OPR)
+0071 0040                          SD_DO	equ 64 ; bit 6 (OPR)
+0072 0080                          SD_CS	equ 128; bit 7 (OPR)
+0073 0020                          SD_DI	equ 32 ; bit 5 (IPR)
+0074                               
+0075                               ;****************************************
+0076                               ;* 
+0077                               ;* Firmware defines for sbug/6809v2
+0078                               ;* 
+0079                               ;****************************************
+0080                               
+0081 f800                          MONITOR	equ $f800	; monitor startup
+0082 f802                          NEXTCMD	equ $f802	; get next monitor command
+0083 f80a                          OUTCH	equ $f80a	; print one character
+0084 f80c                          PDATA	equ $f80c	; print ctrl-d terminated string
+0085                               
+0086                               ;****************************************
+0087                               ;* init_sdcard
+0088                               ;* Input : None
+0089                               ;* Output : None
+0090                               ;* Regs affected : None
+0091                               ;****************************************
+0092                               init_sdcard
+0093                               	;_println sd_msg_initialising
+0094                               
+0095 0000 86 80              [ 2 ] 	lda  #SD_CS		; lda #SD_CS		; Unselect device
+0096 0002 b7 ff 0f           [ 5 ] 	sta  ROPR		; tsb SD_REG
+0097 0005 86 20              [ 2 ] 	lda  #SD_CK		; lda #SD_CLK		; Set clock low
+0098 0007 b7 ff 0e           [ 5 ] 	sta  SOPR		; trb SD_REG
+0099 000a 86 20              [ 2 ] 	lda  #SD_DI		; lda #SD_MOSI		; DI/MOSI high
+0100 000c b7 ff 0f           [ 5 ] 	sta  ROPR		; tsb SD_REG
+0101                               				; ldx #8		; 8*0.125ms = 1ms
+0102                               	;FIX: Delay 1ms+	; jsr long_delay
+0103                               
+0104 000f c6 08              [ 2 ] 	ldb  #8			; ldx #8		; 10 bytes of 0xff
+0105 0011 86 ff              [ 2 ] 	lda  #$ff		; lda #0xff
+0106                               init_sd_pulse
+0107 0013 17 00 3b           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte	; Send the 0xff byte
+0108 0016 5a                 [ 2 ] 	decb			; dex
+0109 0017 26 fa              [ 3 ] 	bne  init_sd_pulse	; bne init_sd_pulse
+0110 0019 86 80              [ 2 ] 	lda  #SD_CS		; lda #SD_CS		; Unselect device
+0111 001b b7 ff 0f           [ 5 ] 	sta  ROPR		; tsb SD_REG
+0112                               
+0113                               init_cmd0
+0114 001e 17 00 e3           [ 9 ] 	lbsr sd_sendcmd0	; jsr sd_sendcmd0
+0115 0021 81 ff              [ 2 ] 	cmpa #$ff		; cmp #0xff		; 0xff is not a valid response
+0116 0023 26 02              [ 3 ] 	bne  init_acmd41	; bne init_acmd41
+0117 0025 20 d9              [ 3 ] 	bra  init_sdcard	; bra init_sdcard
+0118                               	
+0119                               init_acmd41
+0120                               
+0121 0027 17 00 fb           [ 9 ] 	lbsr sd_sendcmd55	; jsr sd_sendcmd55
+0122                               
+0123 002a 17 01 19           [ 9 ] 	lbsr sd_sendcmd41	; jsr sd_sendcmd41
+0124                               	
+0125 002d 81 00              [ 2 ] 	cmpa #0 		; cmp #0		; Was R1 = 0
+0126 002f 26 f6              [ 3 ] 	bne  init_acmd41	; bne init_acmd41	; Retry if not
+0127                               	
+0128                               init_cmd16
+0129 0031 17 01 33           [ 9 ] 	lbsr sd_sendcmd16	; jsr sd_sendcmd16
+0130                               	
+0131 0034 39                 [ 5 ] 	rts			; rts
+0132                               
+0133                               ;****************************************
+0134                               ;* sd_startcmd
+0135                               ;* Start a cmd frame by sending CS high to low
+0136                               ;* Input : None
+0137                               ;* Output : None
+0138                               ;* Regs affected : None
+0139                               ;****************************************
+0140                               sd_startcmd
+0141 0035 34 02              [ 6 ] 	pshs a			; pha
+0142 0037 86 ff              [ 2 ] 	lda  #$ff		; lda #0xff		; Send 0xff
+0143 0039 17 00 15           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte	; Delay / synch pulses
+0144 003c 17 00 12           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte	; With CS not asserted
+0145                               
+0146 003f 86 80              [ 2 ] 	lda  #SD_CS		; lda #SD_CS		; Chip select bit
+0147 0041 b7 ff 0e           [ 5 ] 	sta  SOPR		; trb SD_REG		; Now set it low
+0148 0044 35 02              [ 6 ] 	puls a			; pla
+0149 0046 39                 [ 5 ] 	rts			; rts
+0150                               
+0151                               ;****************************************
+0152                               ;* sd_endcmd
+0153                               ;* End a cmd frame by sending CS high
+0154                               ;* Input : None
+0155                               ;* Output : None
+0156                               ;* Regs affected : None
+0157                               ;****************************************
+0158                               sd_endcmd
+0159 0047 34 02              [ 6 ] 	pshs a			; pha
+0160 0049 86 80              [ 2 ] 	lda  #SD_CS		; lda #SD_CS		; Chip select bit
+0161 004b b7 ff 0f           [ 5 ] 	sta  ROPR		; tsb SD_REG		; First set it high
+0162 004e 35 02              [ 6 ] 	puls a			; pla
+0163 0050 39                 [ 5 ] 	rts			; rts
+0164                               
+0165                               ;****************************************
+0166                               ;* sd_sendbyte
+0167                               ;* Low level byte send routine
+0168                               ;* Input : A = byte to send
+0169                               ;* Output : None
+0170                               ;* Regs affected : None
+0171                               ;****************************************
+0172                               sd_sendbyte			; REMEMBER: output port bits are inverted on 6809v2
+0173                               				; pha
+0174 0051 34 26              [ 9 ] 	pshs a,b,y		; phy
+0175                               
+0176                               				; sta tmp_a		; For shifting out
+0177 0053 10 8e 00 08        [ 4 ] 	ldy  #8			; ldy #8		; 8 bits to shift out
+0178                               				; lda SD_REG		; Load the SD register to A
+0179                               sd_shiftoutbit
+0180 0057 c6 40              [ 2 ] 	ldb  #SD_DO		; ora #SD_MOSI		; And initially set output bit to '1'
+0181 0059 48                 [ 2 ] 	asla			; asl tmp_a		; Unless the bit to transmit is '0'
+0182 005a 25 05              [ 3 ] 	bcs  sd_shiftskiplo	; bcs sd_shiftskiplo	; so then EOR the bit back to 0
+0183 005c f7 ff 0e           [ 5 ] 	stb  SOPR
+0184                               				; eor #SD_MOSI
+0185 005f 20 03              [ 3 ] 	bra  sd_shiftskiphi
+0186                               sd_shiftskiplo
+0187 0061 f7 ff 0f           [ 5 ] 	stb  ROPR		; sta SD_REG		; Save data bit first, it seems, before clocking
+0188                               sd_shiftskiphi	
+0189 0064 c6 20              [ 2 ] 	ldb  #SD_CK
+0190 0066 f7 ff 0f           [ 5 ] 	stb  ROPR		; inc SD_REG
+0191 0069 f7 ff 0e           [ 5 ] 	stb  SOPR		; dec SD_REG
+0192                               
+0193 006c 31 3f              [ 5 ] 	leay -1,y		; dey			; Count bits
+0194 006e 26 e7              [ 3 ] 	bne  sd_shiftoutbit	; bne sd_shiftoutbit	; Until no more bits to send
+0195                               
+0196                               				; ply
+0197 0070 35 26              [ 9 ] 	puls a,b,y		; pla
+0198                               
+0199 0072 39                 [ 5 ] 	rts			; rts
+0200                               
+0201                               ;****************************************
+0202                               ;* sd_getbyte
+0203                               ;* Low level get a byte
+0204                               ;* Input : A = response byte received
+0205                               ;* Output : None
+0206                               ;* Regs affected : None
+0207                               ;****************************************
+0208                               
+0209                               sd_getbyte			; REMEMBER: output port bits are inverted on 6809v2
+0210                               				; phy
+0211 0073 34 14              [ 8 ] 	pshs b,x		; phx
+0212                               
+0213                               				; lda SD_REG
+0214 0075 c6 40              [ 2 ] 	ldb  #SD_DO		; ora #SD_MOSI		; Set MOSI high
+0215 0077 f7 ff 0f           [ 5 ] 	stb  ROPR		; sta SD_REG
+0216                               				; tay			; Same as A with clock high
+0217                               				; iny
+0218                               				; tax			; Same as A with clock low
+0219 007a 30 7f              [ 5 ] 	leax -1,s	; Get a temporary byte to use in place of tmp_a below
+0220 007c c6 20              [ 2 ] 	ldb #SD_CK
+0221                               	; Unroll the code almost 20% faster than slow version
+0222                               	;FIXME: The cmpa : rol may need recoded- see if cmpa:rol will reliably configure the carry bit
+0223                               	; bit 7
+0224 007e f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0225 0081 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0226 0084 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0227 0087 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0228 0089 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0229                               	; bit 6
+0230 008a f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0231 008d b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0232 0090 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0233 0093 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0234 0095 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0235                               	; bit 5
+0236 0096 f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0237 0099 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0238 009c f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0239 009f 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0240 00a1 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0241                               	; bit 4
+0242 00a2 f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0243 00a5 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0244 00a8 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0245 00ab 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0246 00ad 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0247                               	; bit 3
+0248 00ae f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0249 00b1 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0250 00b4 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0251 00b7 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0252 00b9 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0253                               	; bit 2
+0254 00ba f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0255 00bd b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0256 00c0 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0257 00c3 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0258 00c5 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0259                               	; bit 1
+0260 00c6 f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0261 00c9 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0262 00cc f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0263 00cf 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0264 00d1 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0265                               	; bit 0
+0266 00d2 f7 ff 0f           [ 5 ] 	stb  ROPR		; sty SD_REG
+0267 00d5 b6 ff 0d           [ 5 ] 	lda  IPR		; lda SD_REG		; Sample SD card lines (MISO is the MSB)
+0268 00d8 f7 ff 0e           [ 5 ] 	stb  SOPR		; stx SD_REG
+0269 00db 81 20              [ 2 ] 	cmpa #SD_DI		; cmp #SD_MISO		; Trial subtract A-MISO, C=1 if A >= MISO else C=0
+0270 00dd 49                 [ 2 ] 	rola ,x			; rol tmp_a		; Rotate carry state in to tmp_a
+0271                               
+0272 00de a6 84              [ 4 ] 	lda  ,x			; lda tmp_a		; Return response in A
+0273                               
+0274                               				; plx
+0275 00e0 35 14              [ 8 ] 	puls b,x		; ply
+0276                               
+0277                               				; rts
+0278                               
+0279                               
+0280                               ;****************************************
+0281                               ;* sd_getrespbyte
+0282                               ;* Low level get response routine
+0283                               ;* Input : A = response byte received
+0284                               ;* Output : None
+0285                               ;* Regs affected : None
+0286                               ;****************************************
+0287                               sd_getrespbyte
+0288 00e2 34 04              [ 6 ] 	pshs b			; phx
+0289 00e4 5f                 [ 2 ] 	clrb			; ldx #0		; Try up to 256 times
+0290                               sd_respff
+0291 00e5 5c                 [ 2 ] 	incb			; inx			; Retry counter
+0292 00e6 27 07              [ 3 ] 	beq  sd_resptimeout	; beq sd_resptimeout
+0293 00e8 17 ff 88           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte
+0294 00eb 81 ff              [ 2 ] 	cmpa #$ff		; cmp #0xff		; Keep reading MISO until not FF
+0295 00ed 27 f6              [ 3 ] 	beq  sd_respff		; beq sd_respff
+0296                               sd_resptimeout
+0297 00ef 35 04              [ 6 ] 	puls b			; plx
+0298 00f1 39                 [ 5 ] 	rts			; rts
+0299                               
+0300                               ;****************************************
+0301                               ;* sd_busy
+0302                               ;* Low level busy check routine
+0303                               ;* Input : None
+0304                               ;* Output : None
+0305                               ;* Regs affected : None
+0306                               ;****************************************
+0307                               sd_busy
+0308 00f2 34 02              [ 6 ] 	pshs a			; pha
+0309                               sd_isbusy
+0310 00f4 17 ff 7c           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte
+0311 00f7 81 ff              [ 2 ] 	cmpa #$ff		; cmp #0xff		; Keep reading MISO until FF
+0312 00f9 26 f9              [ 3 ] 	bne  sd_isbusy		; bne sd_isbusy
+0313 00fb 35 02              [ 6 ] 	puls a			; pla
+0314 00fd 39                 [ 5 ] 	rts			; rts
+0315                               
+0316                               ;****************************************
+0317                               ;* sd_waitforn0byte
+0318                               ;* Low level routine waits for card to be ready
+0319                               ;* Input : None
+0320                               ;* Output : None
+0321                               ;* Regs affected : None
+0322                               ;****************************************
+0323                               sd_waitforn0byte
+0324 00fe 17 ff e1           [ 9 ] 	lbsr sd_getrespbyte	; jsr sd_getrespbyte
+0325 0101 27 fb              [ 3 ] 	beq  sd_waitforn0byte	; beq sd_waitforn0byte	; Zero byte means not ready
+0326 0103 39                 [ 5 ] 	rts			; rts
+0327                               
+0328                               ;****************************************
+0329                               ;* sd_sendcmd0
+0330                               ;* Send CMD0
+0331                               ;* Input : None
+0332                               ;* Output : None
+0333                               ;* Regs affected : None
+0334                               ;****************************************
+0335                               sd_sendcmd0
+0336 0104 17 ff 2e           [ 9 ] 	lbsr sd_startcmd		; jsr sd_startcmd
+0337                               
+0338                               	; Send 0x40, 0x00, 0x00, 0x00, 0x00, 0x95
+0339 0107 86 40              [ 2 ] 	lda  #$40		; lda #0x40
+0340 0109 17 ff 45           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0341 010c 4f                 [ 2 ] 	clra			; lda #0x00
+0342 010d 17 ff 41           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0343 0110 17 ff 3e           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0344 0113 17 ff 3b           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0345 0116 17 ff 38           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0346 0119 86 95              [ 2 ] 	lda  #$95		; lda #0x95		; Checksum needs to be right
+0347 011b 17 ff 33           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0348                               
+0349 011e 17 00 6a           [ 9 ] 	lbsr sd_getrespR1	; jsr sd_getrespR1	; Get the response
+0350                               
+0351 0121 17 ff 23           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd
+0352                               	
+0353 0124 39                 [ 5 ] 	rts			; rts
+0354                               
+0355                               ;****************************************
+0356                               ;* sd_sendcmd55
+0357                               ;* Send CMD55
+0358                               ;* Input : None
+0359                               ;* Output : None
+0360                               ;* Regs affected : None
+0361                               ;****************************************
+0362                               sd_sendcmd55
+0363 0125 17 ff 0d           [ 9 ] 	lbsr sd_startcmd	; jsr sd_startcmd
+0364                               
+0365                               	; Send 0x40+55, 0x00, 0x00, 0x00, 0x00, 0x95
+0366 0128 86 77              [ 2 ] 	lda  #$77		; lda #0x40+55 FIX: Does a09 do this math right?
+0367 012a 17 ff 24           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0368 012d 4f                 [ 2 ] 	clra			; lda #0x00
+0369 012e 17 ff 20           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0370 0131 17 ff 1d           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0371 0134 17 ff 1a           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0372 0137 17 ff 17           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0373 013a 86 95              [ 2 ] 	lda  #$95		; lda #0x95		; Checksum needs to be right
+0374 013c 17 ff 12           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0375                               
+0376 013f 17 00 49           [ 9 ] 	lbsr sd_getrespR1	; jsr sd_getrespR1	; Get the response
+0377                               
+0378 0142 17 ff 02           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd
+0379                               	
+0380 0145 39                 [ 5 ] 	rts			; rts
+0381                               
+0382                               ;****************************************
+0383                               ;* sd_sendcmd41
+0384                               ;* Send ACMD41
+0385                               ;* Input : None
+0386                               ;* Output : None
+0387                               ;* Regs affected : None
+0388                               ;****************************************
+0389                               sd_sendcmd41
+0390 0146 17 fe ec           [ 9 ] 	lbsr sd_startcmd	; jsr sd_startcmd
+0391                               
+0392                               	; Send 0x40+41, 0x00, 0x00, 0x00, 0x00, 0x95
+0393 0149 86 69              [ 2 ] 	lda  #$40+41		; lda #0x40+41
+0394 014b 17 ff 03           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0395 014e 4f                 [ 2 ] 	clra			; lda #0x00
+0396 014f 17 fe ff           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0397 0152 17 fe fc           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0398 0155 17 fe f9           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0399 0158 17 fe f6           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0400 015b 86 95              [ 2 ] 	lda  #$95		; lda #0x95		; Checksum needs to be right
+0401 015d 17 fe f1           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0402                               
+0403 0160 17 00 28           [ 9 ] 	lbsr sd_getrespR1	; jsr sd_getrespR1	; Get the response
+0404                               
+0405 0163 17 fe e1           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd
+0406                               	
+0407 0166 39                 [ 5 ] 	rts			; rts
+0408                               
+0409                               ;****************************************
+0410                               ;* sd_sendcmd16
+0411                               ;* Send CMD16
+0412                               ;* Input : None
+0413                               ;* Output : None
+0414                               ;* Regs affected : None
+0415                               ;****************************************
+0416                               sd_sendcmd16
+0417 0167 17 fe cb           [ 9 ] 	lbsr sd_startcmd	; jsr sd_startcmd
+0418                               
+0419                               	; Send 0x40+16, 0x00, 0x00, 0x02, 0x00, 0x95
+0420 016a 86 50              [ 2 ] 	lda  #$40+16		; lda #0x40+16
+0421 016c 17 fe e2           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0422 016f 4f                 [ 2 ] 	clra			; lda #0x00
+0423 0170 17 fe de           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0424 0173 17 fe db           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0425 0176 86 02              [ 2 ] 	lda #$02		; lda #0x02		; 0x200 block size = 512 bytes
+0426 0178 17 fe d6           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0427 017b 4f                 [ 2 ] 	clra			; lda #0x00
+0428 017c 17 fe d2           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0429 017f 86 95              [ 2 ] 	lda #$95		; lda #0x95		; Checksum needs to be right
+0430 0181 17 fe cd           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0431                               
+0432 0184 17 00 04           [ 9 ] 	lbsr sd_getrespR1	; jsr sd_getrespR1	; Get the response
+0433                               
+0434 0187 17 fe bd           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd
+0435                               	
+0436 018a 39                 [ 5 ] 	rts			; rts
+0437                               
+0438                               ;****************************************
+0439                               ;* sd_getrespR1
+0440                               ;* Low level get response R1
+0441                               ;* Input : A = response byte received
+0442                               ;* Output : None
+0443                               ;* Regs affected : None
+0444                               ;****************************************
+0445                               sd_getrespR1
+0446 018b 17 ff 54           [ 9 ] 	lbsr sd_getrespbyte	; jsr sd_getrespbyte
+0447 018e 39                 [ 5 ] 	rts			; rts
+0448                               
+0449                               ;****************************************
+0450                               ;* sd_sendcmd17 (Read single)
+0451                               ;* Send CMD17
+0452                               ;* Input : dy=sector address, x=buffer address
+0453                               ;* Output : a=response from card
+0454                               ;* Regs affected : None
+0455                               ;****************************************
+0456                               sd_sendcmd17
+0457                               		; 6809 note: These are pushed in a specific order on purpose, do NOT optimize.
+0458 018f 34 30              [ 9 ] 	pshs x,y		; phx
+0459 0191 34 06              [ 7 ] 	pshs d			; pha			; A is the page to write to
+0460                               
+0461 0193 17 fe 9f           [ 9 ] 	lbsr sd_startcmd	; jsr sd_startcmd
+0462                               
+0463                               	; Convert sector address to byte address
+0464                               	; Sector address is little endian
+0465                               	; Byte address is big endian
+0466                               				; stz sd_addr+3		; LSB of address is always 0
+0467                               	
+0468                               				; lda sd_sect+0		; LSB of sector goes to address+1
+0469                               				; sta sd_addr+2		; Equivalent of * 256
+0470                               				; lda sd_sect+1
+0471                               				; sta sd_addr+1
+0472                               				; lda sd_sect+2
+0473                               				; sta sd_addr+0
+0474                               	
+0475                               				; clc			; Now addr*2 so equiv to sect*512
+0476                               				; asl sd_addr+3
+0477                               				; rol sd_addr+2
+0478                               				; rol sd_addr+1
+0479                               				; rol sd_addr+0
+0480                               
+0481                               sd_cmd17addr	;FIX: Check/set endianness
+0482                               	; Send 0x40+17, dl, dh, yl, yh, 0x95
+0483 0196 86 51              [ 2 ] 	lda  #$40+17		; lda #0x40+17
+0484 0198 35 06              [ 7 ] 	puls d						; recover sector address
+0485 019a 34 04              [ 6 ] 	pshs b						; save B
+0486 019c 17 fe b2           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0487                               				; lda sd_addr+0		; First byte already in A
+0488 019f 17 fe af           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0489 01a2 1f 98              [ 6 ] 	tfr  b,a		; lda sd_addr+1		; Second in B
+0490 01a4 17 fe aa           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0491 01a7 1f 20              [ 6 ] 	tfr  y,d		; lda sd_addr+2		; third in Y low
+0492 01a9 17 fe a5           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0493 01ac 1f 98              [ 6 ] 	tfr  b,a		; lda sd_addr+3		; fourth from Y high
+0494 01ae 17 fe a0           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0495 01b1 86 95              [ 2 ] 	lda  #$95		; lda #0x95		; Checksum needs to be right
+0496 01b3 17 fe 9b           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0497                               
+0498 01b6 17 ff 29           [ 9 ] 	lbsr sd_getrespbyte	; jsr sd_getrespbyte
+0499 01b9 1f 89              [ 6 ] 	tfr a,b			; tax			; Save response in X for return
+0500                               
+0501                               				; pla			; Get the A param
+0502 01bb 17 00 0d           [ 9 ] 	lbsr sd_getrespR17	; jsr sd_getrespR17	; Get the response
+0503                               
+0504 01be 17 ff 31           [ 9 ] 	lbsr sd_busy		; jsr sd_busy		; Wait for card to be ready
+0505                               	
+0506 01c1 17 fe 83           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd
+0507                               
+0508 01c4 1f 98              [ 6 ] 	tfr  b,a		; txa			; Restore the response byte
+0509                               	
+0510 01c6 35 04              [ 6 ] 	puls b
+0511 01c8 35 30              [ 9 ] 	puls x,y		; plx
+0512                               	
+0513 01ca 39                 [ 5 ] 	rts			; rts
+0514                               
+0515                               ;****************************************
+0516                               ;* sd_getrespR17
+0517                               ;* Low level get response R17
+0518                               ;* Input : A = R1 response byte received
+0519                               ;* Output : None
+0520                               ;* Regs affected : None
+0521                               ;****************************************
+0522                               sd_getrespR17
+0523 01cb 34 36              [11 ] 	pshs d,x,y		; pha
+0524                               				; phy
+0525                               				; sta tmp_ahi		; Page to read in to
+0526                               				; stz tmp_alo		; Always a page boundary
+0527                               sd_getrespR17token
+0528 01cd 17 fe a3           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte	; Get a byte
+0529 01d0 81 fe              [ 2 ] 	cmpa #$fe		; cmp #0xfe		; Is it the token?
+0530 01d2 26 f9              [ 3 ] 	bne  sd_getrespR17token	; bne sd_getrespR17token; No
+0531                               	
+0532 01d4 10 8e 02 00        [ 4 ] 	ldy  #512		; ldy #0		; read 1st 256 bytes
+0533                               sd_getrespR17block1
+0534 01d8 17 fe 98           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte	; get a byte
+0535 01db a7 80              [ 6 ] 	sta  ,x+		; sta (tmp_alo),y	; Save the byte
+0536                               				; iny			; Keep going
+0537                               				; bne sd_getrespR17block1; Until all bytes read
+0538                               
+0539                               				; inc tmp_ahi		; Next page
+0540                               sd_getrespR17block2
+0541                               				; jsr sd_getbyte	; get a byet
+0542                               				; sta (tmp_alo),y	; Save the byte
+0543 01dd 31 3f              [ 5 ] 	leay -1,y		; iny			; Keep going
+0544 01df 26 f7              [ 3 ] 	bne  sd_getrespR17block1; bne sd_getrespR17block2; Until all bytes read
+0545                               
+0546 01e1 17 fe 8f           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte	; CRC
+0547 01e4 17 fe 8c           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte	; CRC
+0548                               	
+0549 01e7 35 36              [11 ] 	puls d,x,y		; ply
+0550                               				; pla
+0551                               
+0552 01e9 39                 [ 5 ] 	rts			; rts
+0553                               	
+0554                               
+0555                               ;****************************************
+0556                               ;* sd_sendcmd24 (write single)
+0557                               ;* Send CMD24
+0558                               ;* Input : dy=block address, x=buffer address
+0559                               ;* Output : None
+0560                               ;* Regs affected : None
+0561                               ;****************************************
+0562                               sd_sendcmd24
+0563 01ea 34 30              [ 9 ] 	pshs x,y		; phy
+0564 01ec 34 06              [ 7 ] 	pshs d			; pha
+0565                               
+0566 01ee 17 fe 44           [ 9 ] 	lbsr sd_startcmd	; jsr sd_startcmd
+0567                               
+0568                               	; Convert sector address to byte address
+0569                               	; Sector address is little endian
+0570                               	; Byte address is big endian
+0571                               				; stz sd_addr+3		; LSB of address is always 0
+0572                               				; lda sd_sect+0		; LSB of sector goes to address+1
+0573                               				; sta sd_addr+2		; Equivalent of * 256
+0574                               				; lda sd_sect+1
+0575                               				; sta sd_addr+1
+0576                               				; lda sd_sect+3
+0577                               				; sta sd_addr+0
+0578                               				; clc			; Now addr*2 so equiv to sect*512
+0579                               				; asl sd_addr+3
+0580                               				; rol sd_addr+2
+0581                               				; rol sd_addr+1
+0582                               				; rol sd_addr+0
+0583                               
+0584                               	; Send 0x40+24, 0xA0, dl, dh, yl, yh, 0x95
+0585 01f1 86 58              [ 2 ] 	lda  #$40+24		; lda #0x40+24
+0586 01f3 17 fe 5b           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0587 01f6 ec e4              [ 5 ] 	ldd  ,s						; get a copy of d from stack
+0588                               				; lda sd_addr+0
+0589 01f8 17 fe 56           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0590 01fb 1f 98              [ 6 ] 	tfr  b,a		; lda sd_addr+1
+0591 01fd 17 fe 51           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0592 0200 1f 20              [ 6 ] 	tfr  y,d		; lda sd_addr+2
+0593 0202 17 fe 4c           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0594 0205 1f 98              [ 6 ] 	tfr  b,a		; lda sd_addr+3
+0595 0207 17 fe 47           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0596 020a 86 95              [ 2 ] 	lda  #$95		; lda #0x95		; Checksum needs to be right
+0597 020c 17 fe 42           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0598                               
+0599 020f 17 fe d0           [ 9 ] 	lbsr sd_getrespbyte	; jsr sd_getrespbyte	; Get response
+0600                               
+0601 0212 17 fe 5e           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte
+0602                               	
+0603 0215 86 fe              [ 2 ] 	lda  #$fe		; lda #0xfe		; Start of data token
+0604 0217 17 fe 37           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0605                               
+0606                               				; pla			; Retrieve the address high byte
+0607                               				; sta tmp_ahi
+0608                               				; stz tmp_alo		; Address is always page boundary
+0609                               
+0610                               				; ldy #00
+0611 021a 10 8e 02 00        [ 4 ] 	ldy #512		; 512 bytes to move
+0612                               sd_writeblock_1					; Send first 256 bytes
+0613 021e a6 80              [ 6 ] 	lda  ,x+		; lda (tmp_alo), y
+0614 0220 17 fe 2e           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0615                               				; iny
+0616                               				; bne sd_writeblock_1
+0617                               				; inc tmp_ahi		; Next page for second 256 bytes
+0618                               sd_writeblock_2					; Send second 256 bytes
+0619                               				; lda (tmp_alo), y
+0620                               				; jsr sd_sendbyte
+0621 0223 31 3f              [ 5 ] 	leay -1,y		; iny
+0622 0225 26 f7              [ 3 ] 	bne sd_writeblock_1	; bne sd_writeblock_2
+0623                               
+0624 0227 86 aa              [ 2 ] 	lda #$aa		; lda #0xaa		; Arbitrary CRC bytes
+0625 0229 17 fe 25           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0626 022c 17 fe 22           [ 9 ] 	lbsr sd_sendbyte	; jsr sd_sendbyte
+0627                               
+0628 022f 17 fe 41           [ 9 ] 	lbsr sd_getbyte		; jsr sd_getbyte	; Get data response byte
+0629 0232 34 02              [ 6 ] 	pshs a			; pha			; Save it to return
+0630                               
+0631                               sd_waitforwritecomplete
+0632 0234 17 fe bb           [ 9 ] 	lbsr sd_busy		; jsr sd_busy		; Wait for card to be ready
+0633                               	
+0634 0237 17 fe 0d           [ 9 ] 	lbsr sd_endcmd		; jsr sd_endcmd		; Release the card
+0635                               
+0636 023a 35 06              [ 7 ] 	puls d			; pla
+0637 023c 35 30              [ 9 ] 	puls x,y		; ply
+0638 023e 39                 [ 5 ] 	rts			; rts
+0639                               
+0640                               	
+0641                               sd_msg_initialising
+0642 023f 5c 72 49 6e 69 74        	FCC "\rInitialising SD Card\r"
+     69 61 6c 69 73 69
+     6e 67 20 53 44 20
+     43 61 72 64 5c 72
+0643 0257 04                       	FCB 4
+0644                               
+0645                               sd_cmd55
+0646 0258 77 00 00 00 00 95        	FCB $77, $00, $00, $00, $00, $95
+0647                               sd_cmd58
+0648 025e 7a 00 00 00 00 95        	FCB $7a, $00, $00, $00, $00, $95
+0649                               sd_acmd41
+0650 0264 69 00 00 00 00 95        	FCB $69, $00, $00, $00, $00, $95
+0651                               	

@@ -3,9 +3,11 @@
 
 (c) 2018 David Wood
 
-This system is a 3.68mhz 6809-based microcomputer with 128k RAM and 8K rom.  All I/O services are provided via a 68681 DUART.
+This system is a 3.68mhz 6809-based microcomputer with 128k RAM and 8K rom.  It is intended to run 6809-based operating systems that run within 64k of RAM such as FLEX or OS-9 Level I.
 
-This documentation is primarily a placeholder and will likely be improved as time goes on.
+All I/O services are provided via a 68681 DUART, either via one of its serial ports or via the extra GPIO pins on the device.
+
+This documentation is primarily a placeholder and will likely be improved as time goes on(TM). ;-)
 
 System memory map:
 
@@ -21,31 +23,32 @@ IP1		CTS port B
 IP2		DCD port A (not routed)
 IP3		DCD port B (not routed)
 IP4		n/c
-IP5		SD Data input
+IP5		SD Data input	Input from Micro SD
 
 OP0		RTS port A
 OP1		RTS port B
-OP2		RAM A16
-OP3		RAM A17
-OP4		ROMON
-OP5		SDCK
-OP6		SDDO
-OP7		SDCS
+OP2		RAM A16		A16 to RAM
+OP3		RAM A17		A17 to RAM (128k has CE2 here)
+OP4		ROMON		High enables the 2764 eprom
+OP5		SDCK		Clock output to Micro SD
+OP6		SDDO		Data output to Micro SD
+OP7		SDCS		Chip select output to Micro SD
 		NOTE: The 68681 sets all outputs high on reset
-		NOTE: The 68681 inverts its output bits
+		NOTE: The 68681 inverts its output port bits
 
-The memory is normally provided via a 68128 standard 128kx8 sram.  A 256k sram can be fitted and fully mapped, or a 512k can be used and half of it can be mapped.
+A summary of programming-related information is also printed on the pcb.
+
+The memory fitted with a standard 128k-256k sram.  A 512k device can be fitted but the board lacks sufficient hardware to bankswitch more than 256k.
 A jumper bridge under the SRAM will allow disconnecting A18 from ground.
 
-Many thanks to Dolo@hackaday.IO for the sdcard sample code and permission for the author to use it as long as the code for the firmware remains free and open!
-
 Directories:
-kicad/		Kicad files used to generate the system
-sbug/		S-BUG port to the 6809v2 SBC (finished)
-tests/		Prototype test code
+kicad/		Kicad v<5.0 files used to design the board
+sbug/		S-BUG port to the 6809v2 SBC (working)
+tests/		Prototype test code segments
 sdcard/		SD-Card code (not yet finished)
 
-License: CC:SA license v4.0
-I encourage the sharing of this information as long as some credit is given in the firmware and/or board design.
+** Many thanks to Dolo@hackaday.IO for the sdcard sample code and permission for the author to use it as long as the code for the firmware remains free and open! **
 
-Please direct inquiries to jbevren@gmail.com.
+License: CC:SA license v4.0
+I encourage the sharing and adaptation of this design as long as some credit to me is given in the firmware and/or board design.
+

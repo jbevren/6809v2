@@ -1,0 +1,6 @@
+0001                         
+0002                         
+0003 ffe8                    	ORG $ffe8
+0004 ffe8 8e ff ff           Reset	ldx #$ffff	; this changes for each iteration
+0005 ffeb 6e 94              	jmp [,x]
+0006                         
