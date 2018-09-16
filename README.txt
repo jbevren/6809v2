@@ -52,3 +52,6 @@ sdcard/		SD-Card code (not yet finished)
 License: CC:SA license v4.0
 I encourage the sharing and adaptation of this design as long as some credit to me is given in the firmware and/or board design.
 
+Reach me at jbevren@gmail.com
+
+
