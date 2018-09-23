@@ -4,7 +4,7 @@ Parts needed:
 
 #	Part
 --	--IC's--
-1	63c093 cpu	dip40
+1	63c09E cpu	dip40
 1	68681  duart	dip40
 1	128k-512k sram	dip32*
 1	2764 eprom	dip28
